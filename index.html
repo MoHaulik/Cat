@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>WebXR AR Ghost Cat with Sound</title>
+    <style>
+      /* Remove scrollbars and ensure the canvas fills the screen */
+      body {
+        margin: 0;
+        overflow: hidden;
+      }
+      canvas {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Your entire app will be rendered on this page -->
+    <script type="module">
+      // Importing the Three.js library and AR helper utilities from Skypack
+      import * as THREE from 'https://cdn.skypack.dev/three@0.150.1';
+      import { ARButton } from 'https://cdn.skypack.dev/three@0.150.1/examples/jsm/webxr/ARButton.js';
+
+      let camera, scene, renderer;
+      let cube, reticle, sound;
+
+      init();
+
+      function init() {
+        // Create a new scene
+        scene = new THREE.Scene();
+
+        // Set up the camera with a 70° field-of-view,
+        // adapting to the current window dimensions,
+        // with near (0.01) and far (20) clipping planes.
+        camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
+
+        // Set up the renderer, enabling antialiasing and transparency.
+        renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        // Enable WebXR on the renderer
+        renderer.xr.enabled = true;
+        document.body.appendChild(renderer.domElement);
+
+        // Add the AR button to the page which will allow users to start an AR session.
+        document.body.appendChild(
+          ARButton.createButton(renderer, { requiredFeatures: ['hit-test'] })
+        );
+
+        // === Lighting Setup ===
+        // HemisphereLight simulates an ambient light coming from the sky.
+        const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
+        light.position.set(0.5, 1, 0.25);
+        scene.add(light);
+
+        // === Cube (Ghost Cat Placeholder) Setup ===
+        // Create a simple cube that represents your ghost cat.
+        const geometry = new THREE.BoxGeometry(0.1, 0.1, 0.1);
+        const material = new THREE.MeshStandardMaterial({ color: 0xff00ff });
+        cube = new THREE.Mesh(geometry, material);
+        cube.visible = false; // Hide until the cube is placed in the AR scene
+        scene.add(cube);
+
+        // === Spatial Audio Setup ===
+        // Create an AudioListener and attach it to the camera so that sound is spatial.
+        const listener = new THREE.AudioListener();
+        camera.add(listener);
+
+        // Create PositionalAudio (attached to the cube) to simulate sound coming from a specific point in space.
+        sound = new THREE.PositionalAudio(listener);
+
+        // Load the sound file 'purr.mp3' using the AudioLoader.
+        const audioLoader = new THREE.AudioLoader();
+        audioLoader.load('purr.mp3', function (buffer) {
+          sound.setBuffer(buffer);
+          sound.setRefDistance(0.5); // How quickly the sound falls off with distance
+          sound.setLoop(true);
+          sound.setVolume(0.5);
+        });
+
+        // Attach the audio to the cube so that it follows its position.
+        cube.add(sound);
+
+        // === Controller Setup for Interaction ===
+        // Obtain the controller (AR input) and add it to the scene.
+        let controller = renderer.xr.getController(0);
+        scene.add(controller);
+
+        // Listen for the "select" event which is triggered when the user interacts (e.g., tapping the screen or pressing a button)
+        controller.addEventListener('select', () => {
+          // When the reticle (which shows where the cube will be placed) is visible,
+          // place the cube at the reticle’s position and enable it.
+          if (reticle.visible) {
+            cube.position.setFromMatrixPosition(reticle.matrix);
+            cube.visible = true;
+            // Play the purring sound if it’s not already playing.
+            if (!sound.isPlaying) {
+              sound.play();
+            }
+          }
+        });
+
+        // === Reticle Setup for Surface Detection ===
+        // A reticle is used to visualize where the cube will be placed.
+        // Here we create a ring geometry that lays flat (rotated -90° around the X-axis).
+        const reticleGeometry = new THREE.RingGeometry(0.05, 0.06, 32).rotateX(-Math.PI / 2);
+        const reticleMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+        reticle = new THREE.Mesh(reticleGeometry, reticleMaterial);
+        reticle.matrixAutoUpdate = false;
+        reticle.visible = false;
+        scene.add(reticle);
+
+        // === Hit Test Setup ===
+        // This part uses the WebXR hit test API to detect real-world surfaces.
+        let hitTestSource = null;
+        let hitTestSourceRequested = false;
+
+        // Listen for the AR session to start.
+        renderer.xr.addEventListener('sessionstart', async () => {
+          const session = renderer.xr.getSession();
+          const viewerSpace = await session.requestReferenceSpace('viewer');
+          // Request a hit test source from the XR session.
+          hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
+          hitTestSourceRequested = true;
+        });
+
+        // The render loop that updates the scene in every frame.
+        renderer.setAnimationLoop((timestamp, frame) => {
+          // Use the hit test result to update the reticle's position.
+          if (frame && hitTestSource) {
+            const referenceSpace = renderer.xr.getReferenceSpace();
+            const hitTestResults = frame.getHitTestResults(hitTestSource);
+            if (hitTestResults.length > 0) {
+              const hit = hitTestResults[0];
+              const pose = hit.getPose(referenceSpace);
+              reticle.visible = true;
+              reticle.matrix.fromArray(pose.transform.matrix);
+            } else {
+              reticle.visible = false;
+            }
+          }
+
+          renderer.render(scene, camera);
+        });
+      }
+    </script>
+  </body>
+</html>
